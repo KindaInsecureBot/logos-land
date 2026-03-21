@@ -11,9 +11,8 @@ path = "src/bin/land_registry.rs"
 
 [dependencies]
 lez-framework = { git = "https://github.com/jimmy-claw/lez-framework.git" }
-nssa_core = { git = "https://github.com/logos-blockchain/lssa.git", rev = "767b5afd388c7981bcdf6f5b5c80159607e07e5b" }
-risc0-zkvm = { version = "=3.0.5", default-features = false, features = ["std"] }
+nssa_core = { git = "https://github.com/logos-blockchain/lssa.git", rev = "be4f6c0c78be179b07ba95e272ba00ba8bb62565" }
+risc0-zkvm = { version = "=3.0.5", default-features = false }
 land_registry_core = { path = "../../land_registry_core" }
 serde = { version = "1.0", features = ["derive"] }
-# Override borsh to disable derive feature — borsh_derive proc macro can't compile for riscv32im
-borsh = { version = "1", default-features = false }
+borsh = "1.5"
