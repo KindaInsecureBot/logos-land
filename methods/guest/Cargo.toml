@@ -15,3 +15,5 @@ nssa_core = { git = "https://github.com/logos-blockchain/lssa.git", rev = "767b5
 risc0-zkvm = { version = "=3.0.5", default-features = false, features = ["std"] }
 land_registry_core = { path = "../../land_registry_core" }
 serde = { version = "1.0", features = ["derive"] }
+# Override borsh to disable derive feature — borsh_derive proc macro can't compile for riscv32im
+borsh = { version = "1", default-features = false }
