@@ -4,4 +4,7 @@ members = [
     "methods",
     "examples",
 ]
+exclude = [
+    "methods/guest",
+]
 resolver = "2"
