@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "land_registry_core",
+    "methods",
+    "examples",
+]
+resolver = "2"
