@@ -13,30 +13,29 @@ risc0_zkvm::guest::entry!(main);
 // ---------------------------------------------------------------------------
 
 /// Returns the 6 axial neighbors of a hex at (q, r).
-fn hex_neighbors(q: i32, r: i32) -> [(i32, i32); 6] {
+/// Uses u64 coordinates — wrapping arithmetic handles edge cases.
+fn hex_neighbors(q: u64, r: u64) -> [(u64, u64); 6] {
     [
-        (q + 1, r),
-        (q - 1, r),
-        (q, r + 1),
-        (q, r - 1),
-        (q + 1, r - 1),
-        (q - 1, r + 1),
+        (q.wrapping_add(1), r),
+        (q.wrapping_sub(1), r),
+        (q, r.wrapping_add(1)),
+        (q, r.wrapping_sub(1)),
+        (q.wrapping_add(1), r.wrapping_sub(1)),
+        (q.wrapping_sub(1), r.wrapping_add(1)),
     ]
 }
 
 /// Find all connected components in a set of hex tiles.
-/// Returns a vec of components, each component is a vec of (q, r) coords.
-fn find_connected_components(tiles: &[(i32, i32)]) -> Vec<Vec<(i32, i32)>> {
-    let tile_set: HashSet<(i32, i32)> = tiles.iter().copied().collect();
-    let mut visited: HashSet<(i32, i32)> = HashSet::new();
-    let mut components: Vec<Vec<(i32, i32)>> = Vec::new();
+fn find_connected_components(tiles: &[(u64, u64)]) -> Vec<Vec<(u64, u64)>> {
+    let tile_set: HashSet<(u64, u64)> = tiles.iter().copied().collect();
+    let mut visited: HashSet<(u64, u64)> = HashSet::new();
+    let mut components: Vec<Vec<(u64, u64)>> = Vec::new();
 
     for &tile in tiles {
         if visited.contains(&tile) {
             continue;
         }
 
-        // BFS from this tile
         let mut component = Vec::new();
         let mut queue = VecDeque::new();
         queue.push_back(tile);
@@ -58,7 +57,7 @@ fn find_connected_components(tiles: &[(i32, i32)]) -> Vec<Vec<(i32, i32)>> {
     components
 }
 
-/// Deserialize a HexTile from account data, returning a LezError on failure.
+/// Deserialize a HexTile from account data.
 fn read_tile(data: &[u8], account_index: usize) -> Result<land_registry_core::HexTile, LezError> {
     land_registry_core::HexTile::from_bytes(data).ok_or(LezError::DeserializationError {
         account_index,
@@ -66,7 +65,7 @@ fn read_tile(data: &[u8], account_index: usize) -> Result<land_registry_core::He
     })
 }
 
-/// Serialize a HexTile and write it into an account clone.
+/// Serialize a HexTile into an account clone.
 fn write_tile(
     tile: &land_registry_core::HexTile,
     base: &nssa_core::account::Account,
@@ -86,15 +85,14 @@ mod land_registry {
     use super::*;
 
     /// Claim an unclaimed hex tile at coordinates (q, r).
-    /// The signer becomes the owner. The hex PDA is derived from the coordinates.
     #[instruction]
     pub fn claim(
         #[account(init, pda = [literal("hex"), arg("q"), arg("r")])]
         hex: AccountWithMetadata,
         #[account(signer)]
         owner: AccountWithMetadata,
-        q: i32,
-        r: i32,
+        q: u64,
+        r: u64,
     ) -> LezResult {
         let tile = land_registry_core::HexTile {
             owner: *owner.account_id.value(),
@@ -111,15 +109,14 @@ mod land_registry {
     }
 
     /// Transfer ownership of a hex tile to a new owner.
-    /// Only the current owner (signer) can transfer.
     #[instruction]
     pub fn transfer(
         #[account(mut, pda = [literal("hex"), arg("q"), arg("r")])]
         hex: AccountWithMetadata,
         #[account(signer)]
         owner: AccountWithMetadata,
-        q: i32,
-        r: i32,
+        q: u64,
+        r: u64,
         new_owner: [u8; 32],
     ) -> LezResult {
         let mut tile = read_tile(&hex.account.data, 0)?;
@@ -141,17 +138,14 @@ mod land_registry {
     }
 
     /// Attest ownership of a specific hex tile.
-    /// When run as a privacy-preserving transaction, proves you own the hex
-    /// without revealing your identity. The coordinates are public (in instruction
-    /// data), but the owner is hidden inside the zkVM.
     #[instruction]
     pub fn attest_ownership(
         #[account(pda = [literal("hex"), arg("q"), arg("r")])]
         hex: AccountWithMetadata,
         #[account(signer)]
         owner: AccountWithMetadata,
-        q: i32,
-        r: i32,
+        q: u64,
+        r: u64,
     ) -> LezResult {
         let tile = read_tile(&hex.account.data, 0)?;
 
@@ -169,13 +163,6 @@ mod land_registry {
     }
 
     /// Attest that you own at least `min_count` connected hex tiles.
-    ///
-    /// Pass your hex tile accounts as trailing accounts. The program verifies
-    /// ownership of each, extracts coordinates, runs BFS to find connected
-    /// components, and asserts the largest component has >= min_count tiles.
-    ///
-    /// When run privately: coordinates and ownership stay hidden inside the zkVM.
-    /// Only min_count (in instruction data) and the success/failure are visible.
     #[instruction]
     pub fn attest_connected(
         #[account(signer)]
@@ -183,7 +170,7 @@ mod land_registry {
         hexes: Vec<AccountWithMetadata>,
         min_count: u32,
     ) -> LezResult {
-        let mut tiles: Vec<(i32, i32)> = Vec::new();
+        let mut tiles: Vec<(u64, u64)> = Vec::new();
         let owner_id = *owner.account_id.value();
 
         for (i, hex) in hexes.iter().enumerate() {
@@ -219,11 +206,7 @@ mod land_registry {
         Ok(LezOutput::states_only(post_states))
     }
 
-    /// Attest that you own at least `min_count` separate islands (connected components).
-    ///
-    /// An island is a group of connected hex tiles separated from other groups.
-    /// Proves you have land spread across multiple distinct areas without revealing
-    /// which hexes you own or where they are.
+    /// Attest that you own at least `min_count` separate islands.
     #[instruction]
     pub fn attest_islands(
         #[account(signer)]
@@ -231,7 +214,7 @@ mod land_registry {
         hexes: Vec<AccountWithMetadata>,
         min_count: u32,
     ) -> LezResult {
-        let mut tiles: Vec<(i32, i32)> = Vec::new();
+        let mut tiles: Vec<(u64, u64)> = Vec::new();
         let owner_id = *owner.account_id.value();
 
         for (i, hex) in hexes.iter().enumerate() {
