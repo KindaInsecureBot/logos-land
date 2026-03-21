@@ -58,6 +58,24 @@ fn find_connected_components(tiles: &[(i32, i32)]) -> Vec<Vec<(i32, i32)>> {
     components
 }
 
+/// Deserialize a HexTile from account data, returning a LezError on failure.
+fn read_tile(data: &[u8], account_index: u32) -> Result<land_registry_core::HexTile, LezError> {
+    land_registry_core::HexTile::from_bytes(data).ok_or(LezError::DeserializationError {
+        account_index,
+        message: "Invalid HexTile data".to_string(),
+    })
+}
+
+/// Serialize a HexTile and write it into an account clone.
+fn write_tile(
+    tile: &land_registry_core::HexTile,
+    base: &nssa_core::account::Account,
+) -> nssa_core::account::Account {
+    let mut updated = base.clone();
+    updated.data = tile.to_bytes().try_into().unwrap();
+    updated
+}
+
 // ---------------------------------------------------------------------------
 // LEZ Program
 // ---------------------------------------------------------------------------
@@ -84,11 +102,7 @@ mod land_registry {
             r,
         };
 
-        let data = borsh::to_vec(&tile)
-            .map_err(|e| LezError::SerializationError { message: e.to_string() })?;
-
-        let mut new_hex = hex.account.clone();
-        new_hex.data = data.try_into().unwrap();
+        let new_hex = write_tile(&tile, &hex.account);
 
         Ok(LezOutput::states_only(vec![
             AccountPostState::new_claimed(new_hex),
@@ -108,14 +122,8 @@ mod land_registry {
         r: i32,
         new_owner: [u8; 32],
     ) -> LezResult {
-        let mut tile: land_registry_core::HexTile =
-            borsh::from_slice(&hex.account.data)
-                .map_err(|e| LezError::DeserializationError {
-                    account_index: 0,
-                    message: e.to_string(),
-                })?;
+        let mut tile = read_tile(&hex.account.data, 0)?;
 
-        // Verify the signer is the current owner
         if tile.owner != *owner.account_id.value() {
             return Err(LezError::Custom {
                 code: 6002,
@@ -124,12 +132,7 @@ mod land_registry {
         }
 
         tile.owner = new_owner;
-
-        let data = borsh::to_vec(&tile)
-            .map_err(|e| LezError::SerializationError { message: e.to_string() })?;
-
-        let mut updated = hex.account.clone();
-        updated.data = data.try_into().unwrap();
+        let updated = write_tile(&tile, &hex.account);
 
         Ok(LezOutput::states_only(vec![
             AccountPostState::new(updated),
@@ -150,12 +153,7 @@ mod land_registry {
         q: i32,
         r: i32,
     ) -> LezResult {
-        let tile: land_registry_core::HexTile =
-            borsh::from_slice(&hex.account.data)
-                .map_err(|e| LezError::DeserializationError {
-                    account_index: 0,
-                    message: e.to_string(),
-                })?;
+        let tile = read_tile(&hex.account.data, 0)?;
 
         if tile.owner != *owner.account_id.value() {
             return Err(LezError::Custom {
@@ -164,7 +162,6 @@ mod land_registry {
             });
         }
 
-        // Success — the proof receipt attests ownership
         Ok(LezOutput::states_only(vec![
             AccountPostState::new(hex.account.clone()),
             AccountPostState::new(owner.account.clone()),
@@ -189,14 +186,8 @@ mod land_registry {
         let mut tiles: Vec<(i32, i32)> = Vec::new();
         let owner_id = *owner.account_id.value();
 
-        // Verify ownership and extract coordinates from each hex account
         for (i, hex) in hexes.iter().enumerate() {
-            let tile: land_registry_core::HexTile =
-                borsh::from_slice(&hex.account.data)
-                    .map_err(|e| LezError::DeserializationError {
-                        account_index: (i + 1) as u32, // +1 because owner is index 0
-                        message: e.to_string(),
-                    })?;
+            let tile = read_tile(&hex.account.data, (i + 1) as u32)?;
 
             if tile.owner != owner_id {
                 return Err(LezError::Custom {
@@ -208,10 +199,7 @@ mod land_registry {
             tiles.push((tile.q, tile.r));
         }
 
-        // Find connected components via BFS
         let components = find_connected_components(&tiles);
-
-        // Find the largest connected component
         let largest = components.iter().map(|c| c.len()).max().unwrap_or(0);
 
         if (largest as u32) < min_count {
@@ -224,7 +212,6 @@ mod land_registry {
             });
         }
 
-        // Return all accounts unchanged — the proof is the attestation
         let mut post_states = vec![AccountPostState::new(owner.account.clone())];
         for hex in &hexes {
             post_states.push(AccountPostState::new(hex.account.clone()));
@@ -247,14 +234,8 @@ mod land_registry {
         let mut tiles: Vec<(i32, i32)> = Vec::new();
         let owner_id = *owner.account_id.value();
 
-        // Verify ownership and extract coordinates
         for (i, hex) in hexes.iter().enumerate() {
-            let tile: land_registry_core::HexTile =
-                borsh::from_slice(&hex.account.data)
-                    .map_err(|e| LezError::DeserializationError {
-                        account_index: (i + 1) as u32,
-                        message: e.to_string(),
-                    })?;
+            let tile = read_tile(&hex.account.data, (i + 1) as u32)?;
 
             if tile.owner != owner_id {
                 return Err(LezError::Custom {
@@ -266,7 +247,6 @@ mod land_registry {
             tiles.push((tile.q, tile.r));
         }
 
-        // Count connected components (islands)
         let components = find_connected_components(&tiles);
         let island_count = components.len() as u32;
 
@@ -280,7 +260,6 @@ mod land_registry {
             });
         }
 
-        // Return all accounts unchanged
         let mut post_states = vec![AccountPostState::new(owner.account.clone())];
         for hex in &hexes {
             post_states.push(AccountPostState::new(hex.account.clone()));
