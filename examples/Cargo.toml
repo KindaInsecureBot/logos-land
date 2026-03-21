@@ -1,0 +1,21 @@
+[package]
+name = "land-registry-examples"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "generate_idl"
+path = "src/bin/generate_idl.rs"
+
+[[bin]]
+name = "land_registry_cli"
+path = "src/bin/land_registry_cli.rs"
+
+[dependencies]
+lez-framework = { git = "https://github.com/jimmy-claw/lez-framework.git" }
+nssa_core = { git = "https://github.com/logos-blockchain/lssa.git", rev = "767b5afd388c7981bcdf6f5b5c80159607e07e5b" }
+lez-cli = { git = "https://github.com/jimmy-claw/lez-framework.git" }
+land_registry_core = { path = "../land_registry_core" }
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1.28.2", features = ["net", "rt-multi-thread", "sync", "macros"] }
+risc0-zkvm = { version = "=3.0.5", features = ["std"] }
