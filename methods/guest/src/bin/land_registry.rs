@@ -59,7 +59,7 @@ fn find_connected_components(tiles: &[(i32, i32)]) -> Vec<Vec<(i32, i32)>> {
 }
 
 /// Deserialize a HexTile from account data, returning a LezError on failure.
-fn read_tile(data: &[u8], account_index: u32) -> Result<land_registry_core::HexTile, LezError> {
+fn read_tile(data: &[u8], account_index: usize) -> Result<land_registry_core::HexTile, LezError> {
     land_registry_core::HexTile::from_bytes(data).ok_or(LezError::DeserializationError {
         account_index,
         message: "Invalid HexTile data".to_string(),
@@ -187,7 +187,7 @@ mod land_registry {
         let owner_id = *owner.account_id.value();
 
         for (i, hex) in hexes.iter().enumerate() {
-            let tile = read_tile(&hex.account.data, (i + 1) as u32)?;
+            let tile = read_tile(&hex.account.data, i + 1)?;
 
             if tile.owner != owner_id {
                 return Err(LezError::Custom {
@@ -235,7 +235,7 @@ mod land_registry {
         let owner_id = *owner.account_id.value();
 
         for (i, hex) in hexes.iter().enumerate() {
-            let tile = read_tile(&hex.account.data, (i + 1) as u32)?;
+            let tile = read_tile(&hex.account.data, i + 1)?;
 
             if tile.owner != owner_id {
                 return Err(LezError::Custom {
