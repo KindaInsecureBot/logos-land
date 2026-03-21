@@ -1,6 +1,6 @@
 #![no_main]
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 
 use nssa_core::account::AccountWithMetadata;
 use nssa_core::program::AccountPostState;
@@ -118,7 +118,7 @@ mod land_registry {
         // Verify the signer is the current owner
         if tile.owner != *owner.account_id.value() {
             return Err(LezError::Custom {
-                code: 6001,
+                code: 6002,
                 message: "Not the owner".to_string(),
             });
         }
@@ -159,7 +159,7 @@ mod land_registry {
 
         if tile.owner != *owner.account_id.value() {
             return Err(LezError::Custom {
-                code: 6001,
+                code: 6002,
                 message: "Not the owner".to_string(),
             });
         }
@@ -200,7 +200,7 @@ mod land_registry {
 
             if tile.owner != owner_id {
                 return Err(LezError::Custom {
-                    code: 6004,
+                    code: 6005,
                     message: format!("Owner mismatch at hex ({}, {})", tile.q, tile.r),
                 });
             }
@@ -216,7 +216,7 @@ mod land_registry {
 
         if (largest as u32) < min_count {
             return Err(LezError::Custom {
-                code: 6002,
+                code: 6003,
                 message: format!(
                     "Insufficient connected tiles: largest component has {}, need {}",
                     largest, min_count
@@ -258,7 +258,7 @@ mod land_registry {
 
             if tile.owner != owner_id {
                 return Err(LezError::Custom {
-                    code: 6004,
+                    code: 6005,
                     message: format!("Owner mismatch at hex ({}, {})", tile.q, tile.r),
                 });
             }
@@ -272,7 +272,7 @@ mod land_registry {
 
         if island_count < min_count {
             return Err(LezError::Custom {
-                code: 6003,
+                code: 6004,
                 message: format!(
                     "Insufficient islands: found {}, need {}",
                     island_count, min_count

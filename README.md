@@ -131,10 +131,10 @@ examples/               — IDL generator + CLI wrapper
 
 | Code | Meaning |
 |------|---------|
-| 6001 | Not the owner |
-| 6002 | Insufficient connected tiles |
-| 6003 | Insufficient islands |
-| 6004 | Owner mismatch in provided tiles |
+| 6002 | Not the owner |
+| 6003 | Insufficient connected tiles |
+| 6004 | Insufficient islands |
+| 6005 | Owner mismatch in provided tiles |
 
 ## License
 
