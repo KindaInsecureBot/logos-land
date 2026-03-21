@@ -3,6 +3,8 @@ name = "land-registry-guest"
 version = "0.1.0"
 edition = "2021"
 
+[workspace]
+
 [[bin]]
 name = "land_registry"
 path = "src/bin/land_registry.rs"
