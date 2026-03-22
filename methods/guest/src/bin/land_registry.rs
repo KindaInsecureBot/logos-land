@@ -13,23 +13,23 @@ risc0_zkvm::guest::entry!(main);
 // ---------------------------------------------------------------------------
 
 /// Returns the 6 axial neighbors of a hex at (q, r).
-/// Uses u64 coordinates — wrapping arithmetic handles edge cases.
-fn hex_neighbors(q: u64, r: u64) -> [(u64, u64); 6] {
+/// Uses i64 signed coordinates with standard integer arithmetic.
+fn hex_neighbors(q: i64, r: i64) -> [(i64, i64); 6] {
     [
-        (q.wrapping_add(1), r),
-        (q.wrapping_sub(1), r),
-        (q, r.wrapping_add(1)),
-        (q, r.wrapping_sub(1)),
-        (q.wrapping_add(1), r.wrapping_sub(1)),
-        (q.wrapping_sub(1), r.wrapping_add(1)),
+        (q + 1, r),
+        (q - 1, r),
+        (q, r + 1),
+        (q, r - 1),
+        (q + 1, r - 1),
+        (q - 1, r + 1),
     ]
 }
 
 /// Find all connected components in a set of hex tiles.
-fn find_connected_components(tiles: &[(u64, u64)]) -> Vec<Vec<(u64, u64)>> {
-    let tile_set: HashSet<(u64, u64)> = tiles.iter().copied().collect();
-    let mut visited: HashSet<(u64, u64)> = HashSet::new();
-    let mut components: Vec<Vec<(u64, u64)>> = Vec::new();
+fn find_connected_components(tiles: &[(i64, i64)]) -> Vec<Vec<(i64, i64)>> {
+    let tile_set: HashSet<(i64, i64)> = tiles.iter().copied().collect();
+    let mut visited: HashSet<(i64, i64)> = HashSet::new();
+    let mut components: Vec<Vec<(i64, i64)>> = Vec::new();
 
     for &tile in tiles {
         if visited.contains(&tile) {
@@ -96,8 +96,8 @@ mod land_registry {
     ) -> LezResult {
         let tile = land_registry_core::HexTile {
             owner: *owner.account_id.value(),
-            q,
-            r,
+            q: land_registry_core::from_pda_seed(q),
+            r: land_registry_core::from_pda_seed(r),
         };
 
         let new_hex = write_tile(&tile, &hex.account);
@@ -170,7 +170,7 @@ mod land_registry {
         hexes: Vec<AccountWithMetadata>,
         min_count: u32,
     ) -> LezResult {
-        let mut tiles: Vec<(u64, u64)> = Vec::new();
+        let mut tiles: Vec<(i64, i64)> = Vec::new();
         let owner_id = *owner.account_id.value();
 
         for (i, hex) in hexes.iter().enumerate() {
@@ -214,7 +214,7 @@ mod land_registry {
         hexes: Vec<AccountWithMetadata>,
         min_count: u32,
     ) -> LezResult {
-        let mut tiles: Vec<(u64, u64)> = Vec::new();
+        let mut tiles: Vec<(i64, i64)> = Vec::new();
         let owner_id = *owner.account_id.value();
 
         for (i, hex) in hexes.iter().enumerate() {

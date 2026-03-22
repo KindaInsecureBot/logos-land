@@ -20,7 +20,7 @@ An infinite hexagonal grid where anyone can claim tiles. Ownership is **private 
 
 ### Hex Coordinate System
 
-Uses **axial coordinates** `(q, r)` with `u64` type (for PDA seed compatibility).
+Uses **axial coordinates** `(q, r)` with `i64` signed integers, supporting negative and positive positions.
 
 ```
      (q-1,r-1) (q,r-1) (q+1,r-1)
@@ -28,7 +28,9 @@ Uses **axial coordinates** `(q, r)` with `u64` type (for PDA seed compatibility)
      (q-1,r+1) (q,r+1) (q+1,r+1)
 ```
 
-Every hex has exactly 6 neighbors. The grid is infinite — starts at `(0, 0)` and expands in all directions.
+Every hex has exactly 6 neighbors. The grid is infinite in all directions — negative and positive.
+
+**PDA seed encoding**: Coordinates are mapped to `u64` PDA seeds via a 2^63 bias offset (`to_pda_seed`/`from_pda_seed`). This preserves ordering: `i64::MIN → 0`, `0 → 2^63`, `i64::MAX → u64::MAX`. The instruction interface takes `q: u64` and `r: u64` (biased) for PDA derivation; internally the program stores signed `i64` values in `HexTile`.
 
 ### Privacy Model
 
@@ -139,7 +141,7 @@ $CLI --idl $IDL -p $BINARY transfer --owner $SIGNER --q 0 --r 0 \
 
 ### 3. Manual serialization required (no borsh_derive)
 
-The `borsh_derive` proc macro doesn't compile for the `riscv32im` guest target. `HexTile` uses manual 48-byte serialization: `owner[32] || q[8] || r[8]` (little-endian).
+The `borsh_derive` proc macro doesn't compile for the `riscv32im` guest target. `HexTile` uses manual 48-byte serialization: `owner[32] || q[8] || r[8]` (big-endian).
 
 ## Architecture
 
@@ -155,8 +157,8 @@ examples/               — IDL generator + CLI wrapper
 `HexTile` — 48 bytes per hex account:
 ```
 [0..32]  owner    — account ID of the owner ([u8; 32])
-[32..40] q        — axial coordinate q (u64 LE)
-[40..48] r        — axial coordinate r (u64 LE)
+[32..40] q        — axial coordinate q (i64 BE, signed)
+[40..48] r        — axial coordinate r (i64 BE, signed)
 ```
 
 ### Graph Algorithms (inside zkVM)
