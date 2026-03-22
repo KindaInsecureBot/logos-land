@@ -94,10 +94,13 @@ mod land_registry {
         q: u64,
         r: u64,
     ) -> LezResult {
+        let q_signed = land_registry_core::from_pda_seed(q);
+        let r_signed = land_registry_core::from_pda_seed(r);
         let tile = land_registry_core::HexTile {
             owner: *owner.account_id.value(),
-            q: land_registry_core::from_pda_seed(q),
-            r: land_registry_core::from_pda_seed(r),
+            q: q_signed,
+            r: r_signed,
+            properties: land_registry_core::compute_hex_properties(q_signed, r_signed),
         };
 
         let new_hex = write_tile(&tile, &hex.account);

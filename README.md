@@ -48,6 +48,8 @@ Only the specific claim being attested (e.g., "I own ≥10 connected tiles") is 
 
 Claim an unclaimed hex tile. The signer becomes the owner. Each hex is a unique PDA derived from its coordinates, so a hex can only be claimed once.
 
+At claim time, **deterministic hex properties** are computed from the coordinates and stored immutably in the tile (see [Hex Properties](#hex-properties) below).
+
 ### `transfer(q, r, new_owner)`
 
 Transfer ownership of a hex tile. Only the current owner can transfer. Enables land trading and sales.
@@ -63,6 +65,35 @@ Prove you own at least `min_count` **connected** hex tiles. The program runs BFS
 ### `attest_islands(min_count)`
 
 Prove you own at least `min_count` **islands** (separate connected components). Uses the same BFS algorithm but counts components instead of measuring the largest.
+
+## Hex Properties
+
+Each hex tile has deterministic properties computed from its coordinates at claim time. The properties are **immutable** — they can never change after a tile is claimed.
+
+### Hash Derivation
+
+```
+SHA-256(b"hex_properties" || q.to_be_bytes() || r.to_be_bytes())
+```
+
+Where `q` and `r` are the **signed i64 coordinates** (not the biased PDA seeds). This means anyone can compute what a hex "contains" just from its coordinates — no randomness, no on-chain oracle, fully deterministic.
+
+### Derived Fields
+
+| Field | Source | Description |
+|-------|--------|-------------|
+| `resource_hash` | full hash | Raw 32-byte SHA-256 output — source for all derived properties |
+| `resource_type` | `hash[0]` | Resource type (0–255); meaning TBD |
+| `terrain_value` | `(hash[1] << 8) \| hash[2]` | Endowment/richness score (0–65535) |
+
+### Example
+
+For tile at `(q=0, r=0)`:
+```
+SHA-256(b"hex_properties" || [0,0,0,0,0,0,0,0] || [0,0,0,0,0,0,0,0])
+```
+
+Anyone can reproduce this with standard SHA-256 — no special tooling required.
 
 ## Building
 
@@ -141,7 +172,7 @@ $CLI --idl $IDL -p $BINARY transfer --owner $SIGNER --q 0 --r 0 \
 
 ### 3. Manual serialization required (no borsh_derive)
 
-The `borsh_derive` proc macro doesn't compile for the `riscv32im` guest target. `HexTile` uses manual 48-byte serialization: `owner[32] || q[8] || r[8]` (big-endian).
+The `borsh_derive` proc macro doesn't compile for the `riscv32im` guest target. `HexTile` uses manual 83-byte serialization: `owner[32] || q[8] || r[8] || properties[35]` (big-endian).
 
 ## Architecture
 
@@ -154,11 +185,14 @@ examples/               — IDL generator + CLI wrapper
 
 ### Data Layout
 
-`HexTile` — 48 bytes per hex account:
+`HexTile` — 83 bytes per hex account:
 ```
-[0..32]  owner    — account ID of the owner ([u8; 32])
-[32..40] q        — axial coordinate q (i64 BE, signed)
-[40..48] r        — axial coordinate r (i64 BE, signed)
+[0..32]  owner          — account ID of the owner ([u8; 32])
+[32..40] q              — axial coordinate q (i64 BE, signed)
+[40..48] r              — axial coordinate r (i64 BE, signed)
+[48..80] resource_hash  — SHA-256 of coordinates ([u8; 32])
+[80]     resource_type  — resource_hash[0]
+[81..83] terrain_value  — (resource_hash[1] << 8 | resource_hash[2]) (u16 BE)
 ```
 
 ### Graph Algorithms (inside zkVM)
