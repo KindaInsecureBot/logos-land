@@ -87,6 +87,38 @@ pub fn compute_hex_properties(q: i64, r: i64) -> HexProperties {
     }
 }
 
+/// Tracks per-player state: how many tiles the player currently owns.
+///
+/// Layout (8 bytes): tile_count[8 BE]
+///
+/// PDA derived from player pubkey: `[b"player", player_pubkey]`
+///
+/// Manual serialization — no borsh_derive (not compatible with riscv32im zkVM guest).
+#[derive(Debug, Clone, Default)]
+pub struct PlayerState {
+    /// Number of tiles currently owned by this player.
+    pub tile_count: u64,
+}
+
+impl PlayerState {
+    /// Fixed serialized size in bytes.
+    pub const SIZE: usize = 8;
+
+    /// Serialize to bytes (big-endian).
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.tile_count.to_be_bytes().to_vec()
+    }
+
+    /// Deserialize from bytes (big-endian).
+    pub fn from_bytes(data: &[u8]) -> Option<Self> {
+        if data.len() < Self::SIZE {
+            return None;
+        }
+        let tile_count = u64::from_be_bytes(data[..8].try_into().ok()?);
+        Some(PlayerState { tile_count })
+    }
+}
+
 /// A single hex tile on the infinite hex grid.
 /// Stored as account data for each claimed hex PDA.
 ///
