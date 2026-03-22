@@ -87,11 +87,28 @@ pub fn compute_hex_properties(q: i64, r: i64) -> HexProperties {
     }
 }
 
+/// Compute the owner commitment hash for a pubkey.
+///
+/// `SHA-256(b"owner" || pubkey)`
+///
+/// The `"owner"` domain separator prevents rainbow table attacks.
+/// Store this hash in `HexTile::owner_hash` instead of the raw pubkey
+/// so that on-chain state reveals *where* territory is but not *who* owns it.
+pub fn compute_owner_hash(pubkey: &[u8; 32]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"owner");
+    hasher.update(pubkey);
+    hasher.finalize().into()
+}
+
 /// Tracks per-player state: how many tiles the player currently owns.
 ///
 /// Layout (8 bytes): tile_count[8 BE]
 ///
-/// PDA derived from player pubkey: `[b"player", player_pubkey]`
+/// PDA derived from player owner_hash: `[b"player", owner_hash]`
+/// where `owner_hash = compute_owner_hash(player_pubkey)`.
+/// Using the hash as the PDA seed prevents linking a PlayerState account
+/// to a raw pubkey by external observers.
 ///
 /// Manual serialization — no borsh_derive (not compatible with riscv32im zkVM guest).
 #[derive(Debug, Clone, Default)]
@@ -122,7 +139,10 @@ impl PlayerState {
 /// A single hex tile on the infinite hex grid.
 /// Stored as account data for each claimed hex PDA.
 ///
-/// Layout (83 bytes): owner[32] || q[8 BE] || r[8 BE] || properties[35]
+/// Layout (83 bytes): owner_hash[32] || q[8 BE] || r[8 BE] || properties[35]
+///
+/// `owner_hash` is `SHA-256(b"owner" || owner_pubkey)` — the raw pubkey is never
+/// stored on-chain, so the map of claimed tiles is public but ownership is private.
 ///
 /// Coordinates are i64 (signed), supporting negative and positive grid positions.
 /// PDA seeds use a biased u64 encoding via `to_pda_seed`/`from_pda_seed`:
@@ -132,8 +152,9 @@ impl PlayerState {
 /// in the RISC Zero riscv32im guest target.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HexTile {
-    /// Owner's account ID (32 bytes)
-    pub owner: [u8; 32],
+    /// SHA-256 commitment to the owner's pubkey: `SHA-256(b"owner" || pubkey)`.
+    /// Hides identity while still allowing ownership verification inside the zkVM.
+    pub owner_hash: [u8; 32],
     /// Axial coordinate q (signed)
     pub q: i64,
     /// Axial coordinate r (signed)
@@ -144,12 +165,12 @@ pub struct HexTile {
 
 impl HexTile {
     /// Fixed serialized size in bytes.
-    pub const SIZE: usize = 32 + 8 + 8 + HexProperties::SIZE; // owner + q + r + properties = 83
+    pub const SIZE: usize = 32 + 8 + 8 + HexProperties::SIZE; // owner_hash + q + r + properties = 83
 
     /// Serialize to bytes (big-endian).
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(Self::SIZE);
-        buf.extend_from_slice(&self.owner);
+        buf.extend_from_slice(&self.owner_hash);
         buf.extend_from_slice(&self.q.to_be_bytes());
         buf.extend_from_slice(&self.r.to_be_bytes());
         buf.extend_from_slice(&self.properties.to_bytes());
@@ -161,11 +182,11 @@ impl HexTile {
         if data.len() < Self::SIZE {
             return None;
         }
-        let mut owner = [0u8; 32];
-        owner.copy_from_slice(&data[..32]);
+        let mut owner_hash = [0u8; 32];
+        owner_hash.copy_from_slice(&data[..32]);
         let q = i64::from_be_bytes(data[32..40].try_into().ok()?);
         let r = i64::from_be_bytes(data[40..48].try_into().ok()?);
         let properties = HexProperties::from_bytes(&data[48..])?;
-        Some(HexTile { owner, q, r, properties })
+        Some(HexTile { owner_hash, q, r, properties })
     }
 }

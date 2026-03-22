@@ -178,7 +178,7 @@ mod land_registry {
             let proof_tile = read_tile(&proof_account.account.data, 3)?;
 
             // Proof hex must be owned by the signer.
-            if proof_tile.owner != *owner.account_id.value() {
+            if proof_tile.owner_hash != land_registry_core::compute_owner_hash(owner.account_id.value()) {
                 return Err(LezError::Custom {
                     code: 6002,
                     message: "Proof hex is not owned by signer".to_string(),
@@ -196,7 +196,7 @@ mod land_registry {
 
         // Build the new tile.
         let tile = land_registry_core::HexTile {
-            owner: *owner.account_id.value(),
+            owner_hash: land_registry_core::compute_owner_hash(owner.account_id.value()),
             q: q_signed,
             r: r_signed,
             properties: land_registry_core::compute_hex_properties(q_signed, r_signed),
@@ -255,14 +255,14 @@ mod land_registry {
 
         let mut tile = read_tile(&hex.account.data, 0)?;
 
-        if tile.owner != *owner.account_id.value() {
+        if tile.owner_hash != land_registry_core::compute_owner_hash(owner.account_id.value()) {
             return Err(LezError::Custom {
                 code: 6002,
                 message: "Not the owner".to_string(),
             });
         }
 
-        tile.owner = new_owner;
+        tile.owner_hash = land_registry_core::compute_owner_hash(&new_owner);
         let updated_hex = write_tile(&tile, &hex.account);
 
         // Sender's PlayerState — decrement tile_count.
@@ -305,7 +305,7 @@ mod land_registry {
     ) -> LezResult {
         let tile = read_tile(&hex.account.data, 0)?;
 
-        if tile.owner != *owner.account_id.value() {
+        if tile.owner_hash != land_registry_core::compute_owner_hash(owner.account_id.value()) {
             return Err(LezError::Custom {
                 code: 6002,
                 message: "Not the owner".to_string(),
@@ -327,12 +327,12 @@ mod land_registry {
         min_count: u32,
     ) -> LezResult {
         let mut tiles: Vec<(i64, i64)> = Vec::new();
-        let owner_id = *owner.account_id.value();
+        let owner_hash = land_registry_core::compute_owner_hash(owner.account_id.value());
 
         for (i, hex) in hexes.iter().enumerate() {
             let tile = read_tile(&hex.account.data, i + 1)?;
 
-            if tile.owner != owner_id {
+            if tile.owner_hash != owner_hash {
                 return Err(LezError::Custom {
                     code: 6005,
                     message: format!("Owner mismatch at hex ({}, {})", tile.q, tile.r),
@@ -371,12 +371,12 @@ mod land_registry {
         min_count: u32,
     ) -> LezResult {
         let mut tiles: Vec<(i64, i64)> = Vec::new();
-        let owner_id = *owner.account_id.value();
+        let owner_hash = land_registry_core::compute_owner_hash(owner.account_id.value());
 
         for (i, hex) in hexes.iter().enumerate() {
             let tile = read_tile(&hex.account.data, i + 1)?;
 
-            if tile.owner != owner_id {
+            if tile.owner_hash != owner_hash {
                 return Err(LezError::Custom {
                     code: 6005,
                     message: format!("Owner mismatch at hex ({}, {})", tile.q, tile.r),
