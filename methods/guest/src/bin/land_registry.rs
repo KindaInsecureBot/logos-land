@@ -1,5 +1,13 @@
 #![no_main]
 
+// PRIVACY REQUIREMENT: This program MUST be executed as a privacy-preserving (PP)
+// transaction via NSSA's PP circuit. Public transactions expose the signer pubkey
+// directly on-chain, making the owner_hash commitment meaningless — an observer
+// can trivially recompute SHA-256("owner" || signer) and link every tile to an
+// identity. In PP mode the signer is hidden behind a nullifier key, the program
+// logic runs inside the zkVM, and only encrypted post-states are published.
+// Public transactions are only acceptable for local testing/development.
+
 use std::collections::{HashSet, VecDeque};
 
 use nssa_core::account::AccountWithMetadata;
@@ -155,9 +163,20 @@ mod land_registry {
             });
         }
 
+        let signer_hash = land_registry_core::compute_owner_hash(owner.account_id.value());
+
         let player_state_account = &extra_accounts[0];
         let (player_state, is_new_player) =
             read_player_state(&player_state_account.account.data, 2)?;
+
+        // Verify that the PlayerState account belongs to this signer.
+        // A default (all-zero) owner_hash means the account is uninitialized (new player).
+        if !is_new_player && player_state.owner_hash != signer_hash {
+            return Err(LezError::Custom {
+                code: 6020,
+                message: "PlayerState owner_hash does not match signer".to_string(),
+            });
+        }
 
         let q_signed = land_registry_core::from_pda_seed(q);
         let r_signed = land_registry_core::from_pda_seed(r);
@@ -177,8 +196,16 @@ mod land_registry {
             let proof_account = &extra_accounts[1];
             let proof_tile = read_tile(&proof_account.account.data, 3)?;
 
+            // Proof hex must be a claimed tile (non-default owner_hash).
+            if proof_tile.owner_hash == [0u8; 32] {
+                return Err(LezError::Custom {
+                    code: 6021,
+                    message: "Proof hex is not claimed (default owner_hash)".to_string(),
+                });
+            }
+
             // Proof hex must be owned by the signer.
-            if proof_tile.owner_hash != land_registry_core::compute_owner_hash(owner.account_id.value()) {
+            if proof_tile.owner_hash != signer_hash {
                 return Err(LezError::Custom {
                     code: 6002,
                     message: "Proof hex is not owned by signer".to_string(),
@@ -196,15 +223,16 @@ mod land_registry {
 
         // Build the new tile.
         let tile = land_registry_core::HexTile {
-            owner_hash: land_registry_core::compute_owner_hash(owner.account_id.value()),
+            owner_hash: signer_hash,
             q: q_signed,
             r: r_signed,
             properties: land_registry_core::compute_hex_properties(q_signed, r_signed),
         };
         let new_hex = write_tile(&tile, &hex.account);
 
-        // Increment player tile count.
+        // Increment player tile count; always store owner_hash (new or existing account).
         let updated_player_state = land_registry_core::PlayerState {
+            owner_hash: signer_hash,
             tile_count: player_state.tile_count + 1,
         };
         let updated_ps_account =
@@ -253,30 +281,48 @@ mod land_registry {
             });
         }
 
+        let signer_hash = land_registry_core::compute_owner_hash(owner.account_id.value());
+        let new_owner_hash = land_registry_core::compute_owner_hash(&new_owner);
+
         let mut tile = read_tile(&hex.account.data, 0)?;
 
-        if tile.owner_hash != land_registry_core::compute_owner_hash(owner.account_id.value()) {
+        if tile.owner_hash != signer_hash {
             return Err(LezError::Custom {
                 code: 6002,
                 message: "Not the owner".to_string(),
             });
         }
 
-        tile.owner_hash = land_registry_core::compute_owner_hash(&new_owner);
+        tile.owner_hash = new_owner_hash;
         let updated_hex = write_tile(&tile, &hex.account);
 
-        // Sender's PlayerState — decrement tile_count.
+        // Sender's PlayerState — verify identity, then decrement tile_count.
         let sender_ps_account = &extra_accounts[0];
-        let (mut sender_state, _) = read_player_state(&sender_ps_account.account.data, 2)?;
+        let (mut sender_state, sender_is_new) =
+            read_player_state(&sender_ps_account.account.data, 2)?;
+        if !sender_is_new && sender_state.owner_hash != signer_hash {
+            return Err(LezError::Custom {
+                code: 6020,
+                message: "Sender PlayerState owner_hash does not match signer".to_string(),
+            });
+        }
         if sender_state.tile_count > 0 {
             sender_state.tile_count -= 1;
         }
+        sender_state.owner_hash = signer_hash;
         let updated_sender = write_player_state(&sender_state, &sender_ps_account.account);
 
-        // Receiver's PlayerState — increment tile_count (may be a new account).
+        // Receiver's PlayerState — verify identity (if existing), then increment tile_count.
         let receiver_ps_account = &extra_accounts[1];
         let (mut receiver_state, is_new_receiver) =
             read_player_state(&receiver_ps_account.account.data, 3)?;
+        if !is_new_receiver && receiver_state.owner_hash != new_owner_hash {
+            return Err(LezError::Custom {
+                code: 6020,
+                message: "Receiver PlayerState owner_hash does not match new_owner".to_string(),
+            });
+        }
+        receiver_state.owner_hash = new_owner_hash;
         receiver_state.tile_count += 1;
         let updated_receiver = write_player_state(&receiver_state, &receiver_ps_account.account);
         let receiver_post = if is_new_receiver {
@@ -332,6 +378,14 @@ mod land_registry {
         for (i, hex) in hexes.iter().enumerate() {
             let tile = read_tile(&hex.account.data, i + 1)?;
 
+            // Reject unclaimed (default) tiles.
+            if tile.owner_hash == [0u8; 32] {
+                return Err(LezError::Custom {
+                    code: 6022,
+                    message: format!("Tile at index {} is not claimed", i),
+                });
+            }
+
             if tile.owner_hash != owner_hash {
                 return Err(LezError::Custom {
                     code: 6005,
@@ -375,6 +429,14 @@ mod land_registry {
 
         for (i, hex) in hexes.iter().enumerate() {
             let tile = read_tile(&hex.account.data, i + 1)?;
+
+            // Reject unclaimed (default) tiles.
+            if tile.owner_hash == [0u8; 32] {
+                return Err(LezError::Custom {
+                    code: 6022,
+                    message: format!("Tile at index {} is not claimed", i),
+                });
+            }
 
             if tile.owner_hash != owner_hash {
                 return Err(LezError::Custom {
