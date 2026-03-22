@@ -57,6 +57,21 @@ fn find_connected_components(tiles: &[(i64, i64)]) -> Vec<Vec<(i64, i64)>> {
     components
 }
 
+/// Cost to claim based on the player's current tile count.
+/// TODO: implement actual token charging when token mechanism is available.
+fn claim_cost(current_tile_count: u64) -> u64 {
+    // Placeholder: returns cost units, not yet enforced.
+    current_tile_count + 1
+}
+
+/// Check if two hexes are axial neighbors (distance == 1).
+/// Valid neighbor offsets: (±1,0), (0,±1), (1,−1), (−1,1).
+fn are_neighbors(q1: i64, r1: i64, q2: i64, r2: i64) -> bool {
+    let dq = q2.wrapping_sub(q1);
+    let dr = r2.wrapping_sub(r1);
+    matches!((dq, dr), (1, 0) | (-1, 0) | (0, 1) | (0, -1) | (1, -1) | (-1, 1))
+}
+
 /// Deserialize a HexTile from account data.
 fn read_tile(data: &[u8], account_index: usize) -> Result<land_registry_core::HexTile, LezError> {
     land_registry_core::HexTile::from_bytes(data).ok_or(LezError::DeserializationError {
@@ -75,6 +90,33 @@ fn write_tile(
     updated
 }
 
+/// Serialize a PlayerState into an account clone.
+fn write_player_state(
+    state: &land_registry_core::PlayerState,
+    base: &nssa_core::account::Account,
+) -> nssa_core::account::Account {
+    let mut updated = base.clone();
+    updated.data = state.to_bytes().try_into().unwrap();
+    updated
+}
+
+/// Read a PlayerState from account data, returning a default (tile_count=0) if the account
+/// has not been initialized yet (empty or too-short data).
+fn read_player_state(
+    data: &[u8],
+    account_index: usize,
+) -> Result<(land_registry_core::PlayerState, bool), LezError> {
+    if data.len() < land_registry_core::PlayerState::SIZE {
+        // Account not yet initialized — treat as a new player.
+        return Ok((land_registry_core::PlayerState::default(), true));
+    }
+    let state = land_registry_core::PlayerState::from_bytes(data).ok_or(LezError::DeserializationError {
+        account_index,
+        message: "Invalid PlayerState data".to_string(),
+    })?;
+    Ok((state, false))
+}
+
 // ---------------------------------------------------------------------------
 // LEZ Program
 // ---------------------------------------------------------------------------
@@ -85,6 +127,16 @@ mod land_registry {
     use super::*;
 
     /// Claim an unclaimed hex tile at coordinates (q, r).
+    ///
+    /// Two modes:
+    /// - **Genesis claim** (first hex): `extra_accounts` contains only the player's
+    ///   `PlayerState` PDA (len == 1). No adjacency required.
+    /// - **Expansion claim**: `extra_accounts[0]` is the player's `PlayerState` PDA and
+    ///   `extra_accounts[1]` is a proof hex that (a) is owned by the signer and (b) is a
+    ///   direct axial neighbor of the target hex (len == 2).
+    ///
+    /// `extra_accounts[0]` — PlayerState PDA (`[b"player", signer_pubkey]`)
+    /// `extra_accounts[1]` — adjacent owned hex (expansion only)
     #[instruction]
     pub fn claim(
         #[account(init, pda = [literal("hex"), arg("q"), arg("r")])]
@@ -93,25 +145,94 @@ mod land_registry {
         owner: AccountWithMetadata,
         q: u64,
         r: u64,
+        extra_accounts: Vec<AccountWithMetadata>,
     ) -> LezResult {
+        // extra_accounts[0] = PlayerState PDA (always required)
+        if extra_accounts.is_empty() {
+            return Err(LezError::Custom {
+                code: 6010,
+                message: "Missing player_state account (extra_accounts[0])".to_string(),
+            });
+        }
+
+        let player_state_account = &extra_accounts[0];
+        let (player_state, is_new_player) =
+            read_player_state(&player_state_account.account.data, 2)?;
+
         let q_signed = land_registry_core::from_pda_seed(q);
         let r_signed = land_registry_core::from_pda_seed(r);
+
+        let is_genesis = player_state.tile_count == 0 && is_new_player;
+        let _cost = claim_cost(player_state.tile_count); // placeholder — not yet enforced
+
+        if !is_genesis {
+            // Expansion claim: require adjacent proof hex in extra_accounts[1].
+            if extra_accounts.len() < 2 {
+                return Err(LezError::Custom {
+                    code: 6011,
+                    message: "Expansion claim requires adjacent proof hex (extra_accounts[1])"
+                        .to_string(),
+                });
+            }
+            let proof_account = &extra_accounts[1];
+            let proof_tile = read_tile(&proof_account.account.data, 3)?;
+
+            // Proof hex must be owned by the signer.
+            if proof_tile.owner != *owner.account_id.value() {
+                return Err(LezError::Custom {
+                    code: 6002,
+                    message: "Proof hex is not owned by signer".to_string(),
+                });
+            }
+
+            // Proof hex must be a direct neighbor of the target hex.
+            if !are_neighbors(q_signed, r_signed, proof_tile.q, proof_tile.r) {
+                return Err(LezError::Custom {
+                    code: 6012,
+                    message: "Proof hex is not adjacent to target hex".to_string(),
+                });
+            }
+        }
+
+        // Build the new tile.
         let tile = land_registry_core::HexTile {
             owner: *owner.account_id.value(),
             q: q_signed,
             r: r_signed,
             properties: land_registry_core::compute_hex_properties(q_signed, r_signed),
         };
-
         let new_hex = write_tile(&tile, &hex.account);
 
-        Ok(LezOutput::states_only(vec![
+        // Increment player tile count.
+        let updated_player_state = land_registry_core::PlayerState {
+            tile_count: player_state.tile_count + 1,
+        };
+        let updated_ps_account =
+            write_player_state(&updated_player_state, &player_state_account.account);
+        let ps_post = if is_new_player {
+            AccountPostState::new_claimed(updated_ps_account)
+        } else {
+            AccountPostState::new(updated_ps_account)
+        };
+
+        let mut post_states = vec![
             AccountPostState::new_claimed(new_hex),
             AccountPostState::new(owner.account.clone()),
-        ]))
+            ps_post,
+        ];
+
+        // Return proof hex unchanged (framework requires all inputs in output).
+        if !is_genesis {
+            post_states.push(AccountPostState::new(extra_accounts[1].account.clone()));
+        }
+
+        Ok(LezOutput::states_only(post_states))
     }
 
     /// Transfer ownership of a hex tile to a new owner.
+    ///
+    /// `extra_accounts[0]` — sender's PlayerState PDA (decremented)
+    /// `extra_accounts[1]` — receiver's PlayerState PDA (incremented; may be uninitialized)
     #[instruction]
     pub fn transfer(
         #[account(mut, pda = [literal("hex"), arg("q"), arg("r")])]
@@ -121,7 +242,17 @@ mod land_registry {
         q: u64,
         r: u64,
         new_owner: [u8; 32],
+        extra_accounts: Vec<AccountWithMetadata>,
     ) -> LezResult {
+        if extra_accounts.len() < 2 {
+            return Err(LezError::Custom {
+                code: 6013,
+                message: "Transfer requires sender and receiver player_state accounts \
+                           (extra_accounts[0] and extra_accounts[1])"
+                    .to_string(),
+            });
+        }
+
         let mut tile = read_tile(&hex.account.data, 0)?;
 
         if tile.owner != *owner.account_id.value() {
@@ -132,11 +263,33 @@ mod land_registry {
         }
 
         tile.owner = new_owner;
-        let updated = write_tile(&tile, &hex.account);
+        let updated_hex = write_tile(&tile, &hex.account);
+
+        // Sender's PlayerState — decrement tile_count.
+        let sender_ps_account = &extra_accounts[0];
+        let (mut sender_state, _) = read_player_state(&sender_ps_account.account.data, 2)?;
+        if sender_state.tile_count > 0 {
+            sender_state.tile_count -= 1;
+        }
+        let updated_sender = write_player_state(&sender_state, &sender_ps_account.account);
+
+        // Receiver's PlayerState — increment tile_count (may be a new account).
+        let receiver_ps_account = &extra_accounts[1];
+        let (mut receiver_state, is_new_receiver) =
+            read_player_state(&receiver_ps_account.account.data, 3)?;
+        receiver_state.tile_count += 1;
+        let updated_receiver = write_player_state(&receiver_state, &receiver_ps_account.account);
+        let receiver_post = if is_new_receiver {
+            AccountPostState::new_claimed(updated_receiver)
+        } else {
+            AccountPostState::new(updated_receiver)
+        };
 
         Ok(LezOutput::states_only(vec![
-            AccountPostState::new(updated),
+            AccountPostState::new(updated_hex),
             AccountPostState::new(owner.account.clone()),
+            AccountPostState::new(updated_sender),
+            receiver_post,
         ]))
     }
 
