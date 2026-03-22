@@ -34,7 +34,21 @@ Every hex has exactly 6 neighbors. The grid is infinite in all directions — ne
 
 ### Privacy Model
 
-Each hex's owner is stored on-chain, but when using **private accounts**, the ownership data lives inside encrypted account state. The owner can then generate zero-knowledge proofs about their land portfolio without revealing:
+**Where is public. Who is private.**
+
+The existence of every claimed hex is visible on-chain (PDA existence is a public fact — an accepted tradeoff for efficient lookups). Hex properties (resource type, terrain value) are also public. But ownership is hidden: no raw pubkey is ever written to account state.
+
+Instead, each `HexTile` stores an `owner_hash`:
+
+```
+owner_hash = SHA-256(b"owner" || signer_pubkey)
+```
+
+The `"owner"` domain separator prevents rainbow-table attacks against the 32-byte pubkey space. To verify ownership inside the zkVM, the program recomputes `SHA-256(b"owner" || signer)` and compares it to the stored hash — the signer never has to reveal their identity to an external observer.
+
+`PlayerState` PDAs follow the same pattern: the PDA seed is the `owner_hash` rather than the raw pubkey, so even account existence cannot be linked to a known pubkey by an outsider.
+
+The owner can generate zero-knowledge proofs about their land portfolio without revealing:
 
 - Which specific hexes they own
 - How many hexes they own in total
@@ -58,7 +72,7 @@ At claim time, **deterministic hex properties** are computed from the coordinate
 | Expansion claim | Player already owns tiles | Must provide a proof hex that is (a) owned by the signer and (b) a direct axial neighbor of the target hex |
 
 Pass accounts as `extra_accounts`:
-- `extra_accounts[0]` — the player's `PlayerState` PDA (`[b"player", signer_pubkey]`; always required)
+- `extra_accounts[0]` — the player's `PlayerState` PDA (`[b"player", owner_hash]` where `owner_hash = SHA-256(b"owner" || signer_pubkey)`; always required)
 - `extra_accounts[1]` — adjacent owned proof hex (expansion claims only)
 
 Claiming increments the player's `tile_count` in their `PlayerState`.
@@ -68,8 +82,8 @@ Claiming increments the player's `tile_count` in their `PlayerState`.
 Transfer ownership of a hex tile. Only the current owner can transfer. Enables land trading and sales.
 
 Both the sender's and receiver's `PlayerState` accounts must be passed:
-- `extra_accounts[0]` — sender's `PlayerState` PDA (tile_count decremented)
-- `extra_accounts[1]` — receiver's `PlayerState` PDA (tile_count incremented; may be uninitialized)
+- `extra_accounts[0]` — sender's `PlayerState` PDA (derived from sender's `owner_hash`; tile_count decremented)
+- `extra_accounts[1]` — receiver's `PlayerState` PDA (derived from receiver's `owner_hash`; tile_count incremented; may be uninitialized)
 
 ### `attest_ownership(q, r)`
 
@@ -189,13 +203,14 @@ $CLI --idl $IDL -p $BINARY transfer --owner $SIGNER --q 0 --r 0 \
 
 ### 3. Manual serialization required (no borsh_derive)
 
-The `borsh_derive` proc macro doesn't compile for the `riscv32im` guest target. `HexTile` uses manual 83-byte serialization: `owner[32] || q[8] || r[8] || properties[35]` (big-endian).
+The `borsh_derive` proc macro doesn't compile for the `riscv32im` guest target. `HexTile` uses manual 83-byte serialization: `owner_hash[32] || q[8] || r[8] || properties[35]` (big-endian).
 
 ## PlayerState
 
 Each player has a `PlayerState` PDA that tracks how many tiles they own.
 
-**PDA derivation**: `[b"player", player_pubkey]`
+**PDA derivation**: `[b"player", owner_hash]` where `owner_hash = SHA-256(b"owner" || player_pubkey)`.
+Using the hash as the seed means an outside observer cannot correlate a known pubkey to a tile count.
 
 **Layout** (8 bytes): `tile_count[8 BE]` — unsigned 64-bit big-endian integer.
 
@@ -223,7 +238,7 @@ examples/               — IDL generator + CLI wrapper
 
 `HexTile` — 83 bytes per hex account:
 ```
-[0..32]  owner          — account ID of the owner ([u8; 32])
+[0..32]  owner_hash     — SHA-256("owner" || owner_pubkey) ([u8; 32])
 [32..40] q              — axial coordinate q (i64 BE, signed)
 [40..48] r              — axial coordinate r (i64 BE, signed)
 [48..80] resource_hash  — SHA-256 of coordinates ([u8; 32])
