@@ -50,9 +50,26 @@ Claim an unclaimed hex tile. The signer becomes the owner. Each hex is a unique 
 
 At claim time, **deterministic hex properties** are computed from the coordinates and stored immutably in the tile (see [Hex Properties](#hex-properties) below).
 
+**Two claim modes:**
+
+| Mode | Condition | Requirement |
+|------|-----------|-------------|
+| Genesis claim | Player has no tiles yet (`tile_count == 0`) | Any unclaimed hex; no adjacency required |
+| Expansion claim | Player already owns tiles | Must provide a proof hex that is (a) owned by the signer and (b) a direct axial neighbor of the target hex |
+
+Pass accounts as `extra_accounts`:
+- `extra_accounts[0]` — the player's `PlayerState` PDA (`[b"player", signer_pubkey]`; always required)
+- `extra_accounts[1]` — adjacent owned proof hex (expansion claims only)
+
+Claiming increments the player's `tile_count` in their `PlayerState`.
+
 ### `transfer(q, r, new_owner)`
 
 Transfer ownership of a hex tile. Only the current owner can transfer. Enables land trading and sales.
+
+Both the sender's and receiver's `PlayerState` accounts must be passed:
+- `extra_accounts[0]` — sender's `PlayerState` PDA (tile_count decremented)
+- `extra_accounts[1]` — receiver's `PlayerState` PDA (tile_count incremented; may be uninitialized)
 
 ### `attest_ownership(q, r)`
 
@@ -174,10 +191,29 @@ $CLI --idl $IDL -p $BINARY transfer --owner $SIGNER --q 0 --r 0 \
 
 The `borsh_derive` proc macro doesn't compile for the `riscv32im` guest target. `HexTile` uses manual 83-byte serialization: `owner[32] || q[8] || r[8] || properties[35]` (big-endian).
 
+## PlayerState
+
+Each player has a `PlayerState` PDA that tracks how many tiles they own.
+
+**PDA derivation**: `[b"player", player_pubkey]`
+
+**Layout** (8 bytes): `tile_count[8 BE]` — unsigned 64-bit big-endian integer.
+
+| Event | Effect on tile_count |
+|-------|---------------------|
+| Genesis claim | Initialized to 1 |
+| Expansion claim | Incremented by 1 |
+| Transfer (sender) | Decremented by 1 |
+| Transfer (receiver) | Incremented by 1 (initializes if new) |
+
+### Claim Cost (placeholder)
+
+A `claim_cost(tile_count)` function is defined but **not yet enforced**. It returns `tile_count + 1` cost units as a placeholder for future token-based charging. Cost enforcement will be added once a token mechanism is available.
+
 ## Architecture
 
 ```
-land_registry_core/     — Shared types (HexTile struct, manual serialization)
+land_registry_core/     — Shared types (HexTile, PlayerState — manual serialization)
 methods/guest/          — On-chain program (zkVM guest binary)
 methods/                — risc0-build integration
 examples/               — IDL generator + CLI wrapper
@@ -195,6 +231,11 @@ examples/               — IDL generator + CLI wrapper
 [81..83] terrain_value  — (resource_hash[1] << 8 | resource_hash[2]) (u16 BE)
 ```
 
+`PlayerState` — 8 bytes per player account:
+```
+[0..8]   tile_count     — number of tiles owned (u64 BE)
+```
+
 ### Graph Algorithms (inside zkVM)
 
 BFS on the hex grid to find connected components:
@@ -209,10 +250,14 @@ Hex grids have bounded degree (6), so operations are efficient even inside the z
 
 | Code | Meaning |
 |------|---------|
-| 6002 | Not the owner |
+| 6002 | Not the owner (or proof hex not owned by signer) |
 | 6003 | Insufficient connected tiles |
 | 6004 | Insufficient islands |
 | 6005 | Owner mismatch in provided tiles |
+| 6010 | Missing player_state account in claim |
+| 6011 | Expansion claim missing adjacent proof hex |
+| 6012 | Proof hex is not adjacent to target hex |
+| 6013 | Transfer missing sender/receiver player_state accounts |
 
 ## License
 
