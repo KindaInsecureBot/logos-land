@@ -16,6 +16,23 @@ An infinite hexagonal grid where anyone can claim tiles. Ownership is **private 
 | `attest_connected` | ✅ | Prove connected territory of N+ tiles (BFS in zkVM) |
 | `attest_islands` | ✅ | Prove N+ separate islands (graph components in zkVM) |
 
+## Privacy Requirement: All Transactions Must Be Privacy-Preserving
+
+> **Warning**: Running with public transactions is only safe for local testing and development. Never use public transactions on a live network.
+
+This program's ownership model relies entirely on the signer identity being hidden. The `owner_hash` commitment (`SHA-256("owner" || pubkey)`) provides zero protection in a public transaction: an observer sees the signer pubkey directly in the transaction, and can trivially recompute `SHA-256("owner" || signer)` to link every tile and `PlayerState` account to a known identity.
+
+**Required: NSSA Privacy-Preserving (PP) transactions**
+
+The PP circuit wraps the same program binary automatically:
+
+1. The signer is hidden behind a nullifier key — the raw pubkey never appears on-chain.
+2. Program logic executes inside the zkVM — all ownership checks happen in the zero-knowledge environment.
+3. Only encrypted post-states and commitments are published to the chain.
+4. The `owner_hash` stored in `HexTile` and `PlayerState` cannot be linked to any external identity by an observer.
+
+The result: the *existence* of claimed hexes is public (an accepted tradeoff for efficient lookups), but *who* owns each hex remains private even to an adversary with full chain history.
+
 ## How It Works
 
 ### Hex Coordinate System
@@ -212,7 +229,9 @@ Each player has a `PlayerState` PDA that tracks how many tiles they own.
 **PDA derivation**: `[b"player", owner_hash]` where `owner_hash = SHA-256(b"owner" || player_pubkey)`.
 Using the hash as the seed means an outside observer cannot correlate a known pubkey to a tile count.
 
-**Layout** (8 bytes): `tile_count[8 BE]` — unsigned 64-bit big-endian integer.
+**Layout** (40 bytes): `owner_hash[32] || tile_count[8 BE]`
+
+The `owner_hash` is stored at account creation and verified on every subsequent read. Passing a different player's `PlayerState` or a fabricated account will be rejected with error 6020.
 
 | Event | Effect on tile_count |
 |-------|---------------------|
@@ -246,9 +265,10 @@ examples/               — IDL generator + CLI wrapper
 [81..83] terrain_value  — (resource_hash[1] << 8 | resource_hash[2]) (u16 BE)
 ```
 
-`PlayerState` — 8 bytes per player account:
+`PlayerState` — 40 bytes per player account:
 ```
-[0..8]   tile_count     — number of tiles owned (u64 BE)
+[0..32]  owner_hash     — SHA-256("owner" || player_pubkey) ([u8; 32])
+[32..40] tile_count     — number of tiles owned (u64 BE)
 ```
 
 ### Graph Algorithms (inside zkVM)
@@ -273,6 +293,9 @@ Hex grids have bounded degree (6), so operations are efficient even inside the z
 | 6011 | Expansion claim missing adjacent proof hex |
 | 6012 | Proof hex is not adjacent to target hex |
 | 6013 | Transfer missing sender/receiver player_state accounts |
+| 6020 | PlayerState owner_hash does not match signer (wrong or fabricated account) |
+| 6021 | Proof hex has default owner_hash (tile is not claimed) |
+| 6022 | Hex tile has default owner_hash (tile is not claimed) |
 
 ## License
 
