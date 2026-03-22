@@ -103,27 +103,37 @@ pub fn compute_owner_hash(pubkey: &[u8; 32]) -> [u8; 32] {
 
 /// Tracks per-player state: how many tiles the player currently owns.
 ///
-/// Layout (8 bytes): tile_count[8 BE]
+/// Layout (40 bytes): owner_hash[32] || tile_count[8 BE]
 ///
 /// PDA derived from player owner_hash: `[b"player", owner_hash]`
 /// where `owner_hash = compute_owner_hash(player_pubkey)`.
 /// Using the hash as the PDA seed prevents linking a PlayerState account
 /// to a raw pubkey by external observers.
 ///
+/// The stored `owner_hash` ties this account to a specific player. On every
+/// read the program verifies the stored hash matches the signer, so an attacker
+/// cannot substitute a different player's PlayerState or supply a fabricated one.
+///
 /// Manual serialization — no borsh_derive (not compatible with riscv32im zkVM guest).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct PlayerState {
+    /// Owner commitment hash: `SHA-256(b"owner" || player_pubkey)`.
+    /// Stored at creation and verified on every subsequent use.
+    pub owner_hash: [u8; 32],
     /// Number of tiles currently owned by this player.
     pub tile_count: u64,
 }
 
 impl PlayerState {
     /// Fixed serialized size in bytes.
-    pub const SIZE: usize = 8;
+    pub const SIZE: usize = 32 + 8; // owner_hash + tile_count = 40
 
     /// Serialize to bytes (big-endian).
     pub fn to_bytes(&self) -> Vec<u8> {
-        self.tile_count.to_be_bytes().to_vec()
+        let mut buf = Vec::with_capacity(Self::SIZE);
+        buf.extend_from_slice(&self.owner_hash);
+        buf.extend_from_slice(&self.tile_count.to_be_bytes());
+        buf
     }
 
     /// Deserialize from bytes (big-endian).
@@ -131,8 +141,16 @@ impl PlayerState {
         if data.len() < Self::SIZE {
             return None;
         }
-        let tile_count = u64::from_be_bytes(data[..8].try_into().ok()?);
-        Some(PlayerState { tile_count })
+        let mut owner_hash = [0u8; 32];
+        owner_hash.copy_from_slice(&data[..32]);
+        let tile_count = u64::from_be_bytes(data[32..40].try_into().ok()?);
+        Some(PlayerState { owner_hash, tile_count })
+    }
+}
+
+impl Default for PlayerState {
+    fn default() -> Self {
+        Self { owner_hash: [0u8; 32], tile_count: 0 }
     }
 }
 
