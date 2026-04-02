@@ -212,7 +212,7 @@ $CLI --idl $IDL -p $BINARY transfer --owner $SIGNER --q 0 --r 0 \
 
 **Fix**: Use preconfigured accounts from `initial_accounts` in the sequencer config. They have non-default `program_owner`.
 
-### 2. `lez-cli pda` computes wrong addresses for u64 seeds
+### 2. `spel pda` computes wrong addresses for u64 seeds
 
 **Problem**: The `pda` subcommand treats `u64` arg seeds as UTF-8 strings instead of big-endian u64 bytes. The PDA from `pda hex --q 0 --r 0` differs from the PDA actually used during `claim --q 0 --r 0`.
 

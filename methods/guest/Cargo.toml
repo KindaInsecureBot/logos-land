@@ -10,7 +10,7 @@ name = "land_registry"
 path = "src/bin/land_registry.rs"
 
 [dependencies]
-lez-framework = { git = "https://github.com/jimmy-claw/lez-framework.git" }
+spel-framework = { git = "https://github.com/jimmy-claw/spel-framework.git" }
 nssa_core = { git = "https://github.com/logos-blockchain/lssa.git", rev = "767b5afd388c7981bcdf6f5b5c80159607e07e5b" }
 risc0-zkvm = { version = "=3.0.5", default-features = false }
 land_registry_core = { path = "../../land_registry_core" }

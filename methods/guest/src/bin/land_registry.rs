@@ -12,7 +12,7 @@ use std::collections::{HashSet, VecDeque};
 
 use nssa_core::account::AccountWithMetadata;
 use nssa_core::program::AccountPostState;
-use lez_framework::prelude::*;
+use spel_framework::prelude::*;
 
 risc0_zkvm::guest::entry!(main);
 
