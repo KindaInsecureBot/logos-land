@@ -12,9 +12,11 @@ name = "land_registry_cli"
 path = "src/bin/land_registry_cli.rs"
 
 [dependencies]
-spel-framework = { git = "https://github.com/jimmy-claw/spel-framework.git" }
-nssa_core = { git = "https://github.com/logos-blockchain/lssa.git", rev = "767b5afd388c7981bcdf6f5b5c80159607e07e5b" }
-spel-cli = { git = "https://github.com/jimmy-claw/spel-framework.git" }
+# SPEL framework (v0.2.0+): lez-* renamed to spel-*
+spel-framework = { git = "https://github.com/logos-co/spel.git" }
+spel-cli = { git = "https://github.com/logos-co/spel.git" }
+# logos-execution-zone (formerly lssa) — use main branch for latest LEZ features
+nssa_core = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", branch = "main" }
 land_registry_core = { path = "../land_registry_core" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
